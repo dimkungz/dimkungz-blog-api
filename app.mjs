@@ -2,6 +2,9 @@ import express from "express";
 import cors from "cors";
 import "dotenv/config";
 import postRouter from "./apps/postRouter.mjs";
+import authRouter from "./apps/auth.mjs";
+import protectUser from "./middleware/protectUser.mjs";
+import protectAdmin from "./middleware/protectAdmin.mjs";
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -20,6 +23,16 @@ app.use(express.json());
 app.get("/health", (req, res) => {
     res.status(200).json({ message: "OK" });
 });
+
+app.get("/protected-route", protectUser, (req, res) => {
+    res.json({ message: "This is protected content", user: req.user });
+});
+  
+app.get("/admin-only", protectAdmin, (req, res) => {
+    res.json({ message: "This is admin-only content", admin: req.user });
+});
+
+app.use("/auth", authRouter)
 
 app.use("/posts", postRouter)
 
