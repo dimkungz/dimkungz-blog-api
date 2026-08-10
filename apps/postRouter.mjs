@@ -10,6 +10,9 @@ import {
 } from "../utils/supabaseStorage.mjs";
 import { createNotification } from "../utils/notificationHelpers.mjs";
 import { getOptionalUserId } from "../utils/optionalUser.mjs";
+import { isAdminRequest } from "../utils/isAdminRequest.mjs";
+
+const PUBLISH_STATUS_ID = 2;
 
 const postRouter = Router()
 
@@ -51,6 +54,7 @@ postRouter.get("/", async (req,res) =>{
         const description = req.query.description ? `%${req.query.description}%` : null
         const content = req.query.content ? `%${req.query.content}%` : null
         const category = req.query.category ? `%${req.query.category}%` : null
+        const isAdmin = await isAdminRequest(req)
 
         const page = req.query.page || 1
         const PAGE_SIZE = 6
@@ -79,10 +83,11 @@ postRouter.get("/", async (req,res) =>{
             where (posts.title ilike $1 or $1 is null) and 
                 (posts.description ilike $2 or $2 is null) and 
                 (posts.content ilike $3 or $3 is null) and
-                (categories.name ilike $4 or $4 is null)
+                (categories.name ilike $4 or $4 is null) and
+                ($5 = true or posts.status_id = ${PUBLISH_STATUS_ID})
             order by posts.date desc, posts.id desc
-            limit $5 offset $6
-            `,[title,description,content,category,PAGE_SIZE,offset]
+            limit $6 offset $7
+            `,[title,description,content,category,isAdmin,PAGE_SIZE,offset]
         )
         return res.status(200).json({data: result.rows})
     }catch(error){
@@ -315,6 +320,8 @@ postRouter.get("/:postId",async (req,res) =>{
             return res.status(400).json({ "message": "Invalid post id" })
         }
 
+        const isAdmin = await isAdminRequest(req)
+
         const result = await connectionPool.query(
             `
             select posts.id,
@@ -336,7 +343,8 @@ postRouter.get("/:postId",async (req,res) =>{
             left join users
             on posts.user_id = users.id
             where posts.id = $1
-            `,[id]
+                and ($2 = true or posts.status_id = ${PUBLISH_STATUS_ID})
+            `,[id, isAdmin]
         )
         if(result.rows.length === 0){
             return res.status(404).json({ "message": "Server could not find a requested post" })
@@ -370,7 +378,12 @@ postRouter.put("/:postId",[imageFileUpload,postValidation,protectAdmin], async (
                 `
                 update posts
                 set title=$1,image=$2,category_id=$3,description=$4,content=$5,status_id=$6,user_id=coalesce(user_id, $8),
-                    date = CASE WHEN $6 = 2 THEN NOW() ELSE date END
+                    date = CASE
+                        WHEN $6 = ${PUBLISH_STATUS_ID}
+                            AND (SELECT status_id FROM posts WHERE id = $7) <> ${PUBLISH_STATUS_ID}
+                        THEN NOW()
+                        ELSE date
+                    END
                 where id = $7
                 returning *
                 `,[title,publicUrl,category_id,description,content,status_id,id,userId]
@@ -385,7 +398,12 @@ postRouter.put("/:postId",[imageFileUpload,postValidation,protectAdmin], async (
             `
             update posts
             set title=$1,category_id=$2,description=$3,content=$4,status_id=$5,user_id=coalesce(user_id, $7),
-                date = CASE WHEN $5 = 2 THEN NOW() ELSE date END
+                date = CASE
+                    WHEN $5 = ${PUBLISH_STATUS_ID}
+                        AND (SELECT status_id FROM posts WHERE id = $6) <> ${PUBLISH_STATUS_ID}
+                    THEN NOW()
+                    ELSE date
+                END
             where id = $6
             returning *
             `,[title,category_id,description,content,status_id,id,userId]
