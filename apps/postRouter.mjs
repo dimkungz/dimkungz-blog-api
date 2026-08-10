@@ -80,6 +80,7 @@ postRouter.get("/", async (req,res) =>{
                 (posts.description ilike $2 or $2 is null) and 
                 (posts.content ilike $3 or $3 is null) and
                 (categories.name ilike $4 or $4 is null)
+            order by posts.date desc, posts.id desc
             limit $5 offset $6
             `,[title,description,content,category,PAGE_SIZE,offset]
         )
@@ -387,7 +388,7 @@ postRouter.put("/:postId",[imageFileUpload,postValidation,protectAdmin], async (
     }
 })
 
-postRouter.delete("/:postId",async (req,res) =>{
+postRouter.delete("/:postId", protectAdmin, async (req,res) =>{
     try{
         const id = req.params.postId
         const result = await connectionPool.query(
