@@ -1,18 +1,49 @@
 import { Router } from "express"
 import postValidation from "../middleware/postValidation.mjs"
 import connectionPool from "../utils/db.mjs"
+import protectAdmin from "../middleware/protectAdmin.mjs";
+import multer from "multer";
+import { createClient } from "@supabase/supabase-js";
 
+const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_ANON_KEY
+);
 const postRouter = Router()
 
-postRouter.post("/",postValidation, async (req,res) =>{
+const multerUpload = multer({ storage: multer.memoryStorage() });
+
+const imageFileUpload = multerUpload.fields([
+    { name: "imageFile", maxCount: 1 },
+]);
+
+postRouter.post("/",[postValidation,imageFileUpload,protectAdmin], async (req,res) =>{
     try{
-        const {title, image, category_id, description, content, status_id} = req.body
+        const {title, category_id, description, content, status_id} = req.body
+        const file = req.files.imageFile[0]
+
+        const bucketName = "my-personal-blog";
+        const filePath = `posts/${Date.now()}_${file.originalname}`;
+
+        const { data, error } = await supabase.storage
+            .from(bucketName)
+            .upload(filePath, file.buffer, {
+                contentType: file.mimetype,
+                upsert: false, // ป้องกันการเขียนทับไฟล์เดิม
+            });
+        if (error) {
+            throw error;
+        }
+
+        const {
+            data: { publicUrl },
+        } = supabase.storage.from(bucketName).getPublicUrl(data.path);
 
         const result = await connectionPool.query(
             `
             insert into posts (title,image,category_id,description,content,status_id)
             values($1,$2,$3,$4,$5,$6)
-            `,[title,image,category_id,description,content,status_id]
+            `,[title,publicUrl,category_id,description,content,status_id]
         )
         
         return res.status(201).json({ "message": "Created post successfully" })
@@ -74,10 +105,28 @@ postRouter.get("/:postId",async (req,res) =>{
     }
 })  
 
-postRouter.put("/:postId",postValidation, async (req,res) =>{
+postRouter.put("/:postId",[postValidation,imageFileUpload,protectAdmin], async (req,res) =>{
     try{
         const id = req.params.postId
-        const {title, image, category_id, description, content, status_id} = req.body
+        const {title, category_id, description, content, status_id} = req.body
+        const file = req.files.imageFile[0]
+
+        const bucketName = "my-personal-blog";
+        const filePath = `posts/${Date.now()}_${file.originalname}`;
+
+        const { data, error } = await supabase.storage
+            .from(bucketName)
+            .upload(filePath, file.buffer, {
+                contentType: file.mimetype,
+                upsert: false, // ป้องกันการเขียนทับไฟล์เดิม
+            });
+        if (error) {
+            throw error;
+        }
+
+        const {
+            data: { publicUrl },
+        } = supabase.storage.from(bucketName).getPublicUrl(data.path);
 
         const result = await connectionPool.query(
             `
@@ -85,7 +134,7 @@ postRouter.put("/:postId",postValidation, async (req,res) =>{
             set title=$1,image=$2,category_id=$3,description=$4,content=$5,status_id=$6
             where id = $7
             returning *
-            `,[title,image,category_id,description,content,status_id,id]
+            `,[title,publicUrl,category_id,description,content,status_id,id]
         )
         if(result.rows.length===0){
             return res.status(404).json({ "message": "Server could not find a requested post to update" })
