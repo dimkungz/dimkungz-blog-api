@@ -3,8 +3,12 @@ import cors from "cors";
 import "dotenv/config";
 import postRouter from "./apps/postRouter.mjs";
 import authRouter from "./apps/auth.mjs";
+import notificationRouter from "./apps/notificationRouter.mjs";
 import protectUser from "./middleware/protectUser.mjs";
 import protectAdmin from "./middleware/protectAdmin.mjs";
+import { ensureStorageBucket, STORAGE_BUCKET } from "./utils/supabaseStorage.mjs";
+import { ensurePostsAuthorSchema } from "./utils/postSchema.mjs";
+import { ensureNotificationsSchema } from "./utils/notificationSchema.mjs";
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -34,8 +38,29 @@ app.get("/admin-only", protectAdmin, (req, res) => {
 
 app.use("/auth", authRouter)
 
+app.use("/notifications", notificationRouter)
+
 app.use("/posts", postRouter)
 
-app.listen(port, () =>{
+app.listen(port, async () =>{
+    try {
+        await ensureStorageBucket();
+        console.log(`Storage bucket ready: ${STORAGE_BUCKET}`);
+    } catch (error) {
+        console.error("Failed to initialize storage bucket:", error.message);
+    }
+
+    try {
+        await ensurePostsAuthorSchema();
+    } catch (error) {
+        console.error("Failed to initialize posts schema:", error.message);
+    }
+
+    try {
+        await ensureNotificationsSchema();
+    } catch (error) {
+        console.error("Failed to initialize notifications schema:", error.message);
+    }
+
     console.log(`Server is running at ${port}`);
 })

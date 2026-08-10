@@ -1,12 +1,33 @@
 import { Router } from "express";
 import { createClient } from "@supabase/supabase-js";
+import multer from "multer";
 import connectionPool from "../utils/db.mjs";
+import {
+  getProfileImagePath,
+  uploadImageToStorage,
+} from "../utils/supabaseStorage.mjs";
 
 const supabase = createClient(
     process.env.SUPABASE_URL,
     process.env.SUPABASE_ANON_KEY
 );
 const authRouter = Router();
+const multerUpload = multer({ storage: multer.memoryStorage() });
+const profilePicUpload = multerUpload.single("profilePic");
+
+async function getAuthUserId(req) {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) {
+    return { error: "Unauthorized: Token missing", status: 401 };
+  }
+
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data.user) {
+    return { error: "Unauthorized or token expired", status: 401 };
+  }
+
+  return { userId: data.user.id };
+}
 
 authRouter.post("/register", async (req, res) => {
     const { email, password, username, name } = req.body;
@@ -84,25 +105,30 @@ authRouter.post("/login", async (req, res) => {
 });
 
 authRouter.get("/get-user", async (req, res) => {
-    const token = req.headers.authorization?.split(" ")[1];
-    if (!token) {
-      return res.status(401).json({ error: "Unauthorized: Token missing" });
+    const auth = await getAuthUserId(req);
+    if (auth.error) {
+      return res.status(auth.status).json({ error: auth.error });
     }
+
     try {
-      const { data, error } = await supabase.auth.getUser(token);
-      if (error) {
-        return res.status(401).json({ error: "Unauthorized or token expired" });
-      }
-      const supabaseUserId = data.user.id;
       const query = `
         SELECT * FROM users
         WHERE id = $1
       `;
-      const values = [supabaseUserId];
+      const values = [auth.userId];
       const { rows } = await connectionPool.query(query, values);
+
+      if (!rows.length) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const { data: supabaseUser } = await supabase.auth.getUser(
+        req.headers.authorization?.split(" ")[1]
+      );
+
       res.status(200).json({
-        id: data.user.id,
-        email: data.user.email,
+        id: auth.userId,
+        email: supabaseUser.user.email,
         username: rows[0].username,
         name: rows[0].name,
         role: rows[0].role,
@@ -110,6 +136,107 @@ authRouter.get("/get-user", async (req, res) => {
       });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+authRouter.put("/profile", (req, res, next) => {
+  profilePicUpload(req, res, (uploadError) => {
+    if (uploadError) {
+      return res.status(400).json({
+        error: uploadError.message || "Invalid profile picture upload",
+      });
+    }
+    next();
+  });
+}, async (req, res) => {
+    const auth = await getAuthUserId(req);
+    if (auth.error) {
+      return res.status(auth.status).json({ error: auth.error });
+    }
+
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
+    const file = req.file;
+
+    if (!name) {
+      return res.status(400).json({ error: "Name is required" });
+    }
+
+    if (!username) {
+      return res.status(400).json({ error: "Username is required" });
+    }
+
+    try {
+      const usernameCheckQuery = `
+        SELECT id FROM users
+        WHERE username = $1 AND id <> $2
+      `;
+      const { rows: existingUser } = await connectionPool.query(
+        usernameCheckQuery,
+        [username, auth.userId]
+      );
+
+      if (existingUser.length > 0) {
+        return res.status(400).json({ error: "This username is already taken" });
+      }
+
+      let profilePicUrl = null;
+
+      if (file) {
+        try {
+          const filePath = getProfileImagePath(auth.userId, file.mimetype);
+          profilePicUrl = await uploadImageToStorage({
+            file,
+            filePath,
+            authHeader: req.headers.authorization,
+          });
+        } catch (uploadError) {
+          console.error("Profile picture upload failed:", uploadError);
+          return res.status(500).json({
+            error: uploadError.message || "Failed to upload profile picture",
+          });
+        }
+      }
+
+      const query = `
+        UPDATE users
+        SET
+          name = $1,
+          username = $2,
+          profile_pic = COALESCE($3, profile_pic)
+        WHERE id = $4
+        RETURNING *
+      `;
+      const values = [name, username, profilePicUrl, auth.userId];
+      const { rows } = await connectionPool.query(query, values);
+
+      if (!rows.length) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const { data: supabaseUser, error: supabaseError } = await supabase.auth.getUser(
+        req.headers.authorization?.split(" ")[1]
+      );
+
+      if (supabaseError || !supabaseUser?.user) {
+        return res.status(401).json({ error: "Unauthorized or token expired" });
+      }
+
+      res.status(200).json({
+        message: "Profile updated successfully",
+        id: auth.userId,
+        email: supabaseUser.user.email,
+        username: rows[0].username,
+        name: rows[0].name,
+        role: rows[0].role,
+        profilePic: rows[0].profile_pic,
+      });
+    } catch (error) {
+      console.error("Failed to update profile:", error);
+      res.status(500).json({
+        error: "Failed to update profile",
+        message: error.message,
+      });
     }
 });
 
