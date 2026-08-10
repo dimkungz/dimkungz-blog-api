@@ -309,7 +309,12 @@ postRouter.post("/:postId/likes", protectUser, async (req, res) => {
 
 postRouter.get("/:postId",async (req,res) =>{
     try{
-        const id = req.params.postId
+        const id = Number(req.params.postId)
+
+        if (!Number.isInteger(id) || id < 1) {
+            return res.status(400).json({ "message": "Invalid post id" })
+        }
+
         const result = await connectionPool.query(
             `
             select posts.id,
@@ -344,10 +349,14 @@ postRouter.get("/:postId",async (req,res) =>{
 
 postRouter.put("/:postId",[imageFileUpload,postValidation,protectAdmin], async (req,res) =>{
     try{
-        const id = req.params.postId
+        const id = Number(req.params.postId)
         const {title, category_id, description, content, status_id} = req.body
         const file = req.files?.imageFile?.[0]
         const userId = req.user.id
+
+        if (!Number.isInteger(id) || id < 1) {
+            return res.status(400).json({ "message": "Invalid post id" })
+        }
 
         if (file) {
             const filePath = getPostImagePath(file.originalname)
@@ -360,7 +369,8 @@ postRouter.put("/:postId",[imageFileUpload,postValidation,protectAdmin], async (
             const result = await connectionPool.query(
                 `
                 update posts
-                set title=$1,image=$2,category_id=$3,description=$4,content=$5,status_id=$6,user_id=coalesce(user_id, $8)
+                set title=$1,image=$2,category_id=$3,description=$4,content=$5,status_id=$6,user_id=coalesce(user_id, $8),
+                    date = CASE WHEN $6 = 2 THEN NOW() ELSE date END
                 where id = $7
                 returning *
                 `,[title,publicUrl,category_id,description,content,status_id,id,userId]
@@ -374,7 +384,8 @@ postRouter.put("/:postId",[imageFileUpload,postValidation,protectAdmin], async (
         const result = await connectionPool.query(
             `
             update posts
-            set title=$1,category_id=$2,description=$3,content=$4,status_id=$5,user_id=coalesce(user_id, $7)
+            set title=$1,category_id=$2,description=$3,content=$4,status_id=$5,user_id=coalesce(user_id, $7),
+                date = CASE WHEN $5 = 2 THEN NOW() ELSE date END
             where id = $6
             returning *
             `,[title,category_id,description,content,status_id,id,userId]
@@ -390,7 +401,12 @@ postRouter.put("/:postId",[imageFileUpload,postValidation,protectAdmin], async (
 
 postRouter.delete("/:postId", protectAdmin, async (req,res) =>{
     try{
-        const id = req.params.postId
+        const id = Number(req.params.postId)
+
+        if (!Number.isInteger(id) || id < 1) {
+            return res.status(400).json({ "message": "Invalid post id" })
+        }
+
         const result = await connectionPool.query(
             `
             delete from posts
@@ -403,7 +419,7 @@ postRouter.delete("/:postId", protectAdmin, async (req,res) =>{
         }
         return res.status(200).json({ "message": "Deleted post successfully" })
     }catch(error){
-        return res.status(500).json({ "message": "Server could not delete post because database connection" })
+        return res.status(500).json({ "message": "Server could not delete post because database connection", error: error.message })
     }
 })
 
